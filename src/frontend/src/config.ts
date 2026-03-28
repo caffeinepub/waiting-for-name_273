@@ -81,13 +81,12 @@ export async function loadConfig(): Promise<Config> {
   }
 }
 
-// Shared storage client singleton -- created once, reused for all uploads
-let sharedStorageClient: StorageClient | null = null;
-let sharedStorageAgent: HttpAgent | null = null;
+// Shared storage client -- created once, reused for all uploads
+let sharedStorageClientCache: StorageClient | null = null;
 
 export async function getSharedStorageClient(): Promise<StorageClient> {
-  if (sharedStorageClient) {
-    return sharedStorageClient;
+  if (sharedStorageClientCache) {
+    return sharedStorageClientCache;
   }
   const config = await loadConfig();
   const agent = new HttpAgent({
@@ -95,18 +94,17 @@ export async function getSharedStorageClient(): Promise<StorageClient> {
   });
   if (config.backend_host?.includes("localhost")) {
     await agent.fetchRootKey().catch((err) => {
-      console.warn("Unable to fetch root key", err);
+      console.warn("Unable to fetch root key:", err);
     });
   }
-  sharedStorageAgent = agent;
-  sharedStorageClient = new StorageClient(
+  sharedStorageClientCache = new StorageClient(
     config.bucket_name,
     config.storage_gateway_url,
     config.backend_canister_id,
     config.project_id,
     agent,
   );
-  return sharedStorageClient;
+  return sharedStorageClientCache;
 }
 
 function extractAgentErrorMessage(error: string): string {
