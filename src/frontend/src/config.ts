@@ -81,13 +81,13 @@ export async function loadConfig(): Promise<Config> {
   }
 }
 
-// Shared storage client singleton — created once and reused for all uploads
-let sharedStorageClientCache: StorageClient | null = null;
-let sharedAgentCache: HttpAgent | null = null;
+// Shared storage client singleton -- created once, reused for all uploads
+let sharedStorageClient: StorageClient | null = null;
+let sharedStorageAgent: HttpAgent | null = null;
 
 export async function getSharedStorageClient(): Promise<StorageClient> {
-  if (sharedStorageClientCache) {
-    return sharedStorageClientCache;
+  if (sharedStorageClient) {
+    return sharedStorageClient;
   }
   const config = await loadConfig();
   const agent = new HttpAgent({
@@ -95,18 +95,18 @@ export async function getSharedStorageClient(): Promise<StorageClient> {
   });
   if (config.backend_host?.includes("localhost")) {
     await agent.fetchRootKey().catch((err) => {
-      console.warn("Unable to fetch root key.", err);
+      console.warn("Unable to fetch root key", err);
     });
   }
-  sharedAgentCache = agent;
-  sharedStorageClientCache = new StorageClient(
+  sharedStorageAgent = agent;
+  sharedStorageClient = new StorageClient(
     config.bucket_name,
     config.storage_gateway_url,
     config.backend_canister_id,
     config.project_id,
     agent,
   );
-  return sharedStorageClientCache;
+  return sharedStorageClient;
 }
 
 function extractAgentErrorMessage(error: string): string {
@@ -129,11 +129,14 @@ async function maybeLoadMockBackend(): Promise<backendInterface | null> {
 
   try {
     const mockModules = import.meta.glob("./mocks/backend.{ts,tsx,js,jsx}");
+
     const path = Object.keys(mockModules)[0];
     if (!path) return null;
+
     const mod = (await mockModules[path]()) as {
       mockBackend?: backendInterface;
     };
+
     return mod.mockBackend ?? null;
   } catch {
     return null;
@@ -150,12 +153,11 @@ export async function createActorWithConfig(
 
   const config = await loadConfig();
   const resolvedOptions = options ?? {};
-  // Reuse the shared agent if available to avoid creating duplicate connections
-  const agent = sharedAgentCache ?? new HttpAgent({
+  const agent = new HttpAgent({
     ...resolvedOptions.agentOptions,
     host: config.backend_host,
   });
-  if (!sharedAgentCache && config.backend_host?.includes("localhost")) {
+  if (config.backend_host?.includes("localhost")) {
     await agent.fetchRootKey().catch((err) => {
       console.warn(
         "Unable to fetch root key. Check to ensure that your local replica is running",
@@ -169,7 +171,7 @@ export async function createActorWithConfig(
     processError,
   };
 
-  const storageClient = sharedStorageClientCache ?? new StorageClient(
+  const storageClient = new StorageClient(
     config.bucket_name,
     config.storage_gateway_url,
     config.backend_canister_id,
