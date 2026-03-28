@@ -76,6 +76,7 @@ export async function loadConfig(): Promise<Config> {
       project_id: DEFAULT_PROJECT_ID,
       ii_derivation_origin: undefined,
     };
+    configCache = fallbackConfig;
     return fallbackConfig;
   }
 }
@@ -100,48 +101,50 @@ async function maybeLoadMockBackend(): Promise<backendInterface | null> {
 
   try {
     const mockModules = import.meta.glob("./mocks/backend.{ts,tsx,js,jsx}");
+
     const path = Object.keys(mockModules)[0];
     if (!path) return null;
+
     const mod = (await mockModules[path]()) as {
       mockBackend?: backendInterface;
     };
+
     return mod.mockBackend ?? null;
   } catch {
     return null;
   }
 }
 
-// Single shared StorageClient instance, created once and reused for all uploads
-let sharedStorageClient: StorageClient | null = null;
-let sharedAgent: HttpAgent | null = null;
+// ─── Shared StorageClient singleton ───────────────────────────────────────────
+// This is the one place a StorageClient is created. storageHelper.ts calls
+// getSharedStorageClient() so every upload reuses the same authenticated client.
+let sharedStorageClientPromise: Promise<StorageClient> | null = null;
 
 export async function getSharedStorageClient(): Promise<StorageClient> {
-  if (sharedStorageClient) {
-    return sharedStorageClient;
+  if (!sharedStorageClientPromise) {
+    sharedStorageClientPromise = (async () => {
+      const config = await loadConfig();
+      const agent = new HttpAgent({
+        host: config.backend_host,
+      });
+      if (config.backend_host?.includes("localhost")) {
+        await agent.fetchRootKey().catch((err) => {
+          console.warn("Unable to fetch root key for localhost");
+          console.error(err);
+        });
+      }
+      return new StorageClient(
+        config.bucket_name,
+        config.storage_gateway_url,
+        config.backend_canister_id,
+        config.project_id,
+        agent,
+      );
+    })();
   }
-
-  const config = await loadConfig();
-  const agent = new HttpAgent({
-    host: config.backend_host,
-  });
-
-  if (config.backend_host?.includes("localhost")) {
-    await agent.fetchRootKey().catch((err) => {
-      console.warn("Unable to fetch root key.", err);
-    });
-  }
-
-  sharedAgent = agent;
-  sharedStorageClient = new StorageClient(
-    config.bucket_name,
-    config.storage_gateway_url,
-    config.backend_canister_id,
-    config.project_id,
-    agent,
-  );
-
-  return sharedStorageClient;
+  return sharedStorageClientPromise;
 }
+// ──────────────────────────────────────────────────────────────────────────────
 
 export async function createActorWithConfig(
   options?: CreateActorOptions,
