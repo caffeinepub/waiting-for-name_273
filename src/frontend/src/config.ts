@@ -111,27 +111,36 @@ async function maybeLoadMockBackend(): Promise<backendInterface | null> {
   }
 }
 
-// Shared storage client -- created once, reused everywhere
-let sharedStorageClientPromise: Promise<StorageClient> | null = null;
+// Single shared StorageClient instance, created once and reused for all uploads
+let sharedStorageClient: StorageClient | null = null;
+let sharedAgent: HttpAgent | null = null;
 
 export async function getSharedStorageClient(): Promise<StorageClient> {
-  if (!sharedStorageClientPromise) {
-    sharedStorageClientPromise = (async () => {
-      const config = await loadConfig();
-      const agent = new HttpAgent({ host: config.backend_host });
-      if (config.backend_host?.includes("localhost")) {
-        await agent.fetchRootKey().catch(console.error);
-      }
-      return new StorageClient(
-        config.bucket_name,
-        config.storage_gateway_url,
-        config.backend_canister_id,
-        config.project_id,
-        agent,
-      );
-    })();
+  if (sharedStorageClient) {
+    return sharedStorageClient;
   }
-  return sharedStorageClientPromise;
+
+  const config = await loadConfig();
+  const agent = new HttpAgent({
+    host: config.backend_host,
+  });
+
+  if (config.backend_host?.includes("localhost")) {
+    await agent.fetchRootKey().catch((err) => {
+      console.warn("Unable to fetch root key.", err);
+    });
+  }
+
+  sharedAgent = agent;
+  sharedStorageClient = new StorageClient(
+    config.bucket_name,
+    config.storage_gateway_url,
+    config.backend_canister_id,
+    config.project_id,
+    agent,
+  );
+
+  return sharedStorageClient;
 }
 
 export async function createActorWithConfig(
@@ -162,7 +171,13 @@ export async function createActorWithConfig(
     processError,
   };
 
-  const storageClient = await getSharedStorageClient();
+  const storageClient = new StorageClient(
+    config.bucket_name,
+    config.storage_gateway_url,
+    config.backend_canister_id,
+    config.project_id,
+    agent,
+  );
 
   const MOTOKO_DEDUPLICATION_SENTINEL = "!caf!";
 
