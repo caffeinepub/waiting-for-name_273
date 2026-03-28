@@ -76,6 +76,7 @@ export async function loadConfig(): Promise<Config> {
       project_id: DEFAULT_PROJECT_ID,
       ii_derivation_origin: undefined,
     };
+    configCache = fallbackConfig;
     return fallbackConfig;
   }
 }
@@ -97,69 +98,69 @@ async function maybeLoadMockBackend(): Promise<backendInterface | null> {
   if (import.meta.env.VITE_USE_MOCK !== "true") {
     return null;
   }
-
   try {
-    // If VITE_USE_MOCK is enabled, try to load a mock backend module *if it exists*.
-    // We use import.meta.glob so builds don't fail when the mock file is absent.
     const mockModules = import.meta.glob("./mocks/backend.{ts,tsx,js,jsx}");
-
     const path = Object.keys(mockModules)[0];
     if (!path) return null;
-
-    const mod = (await mockModules[path]()) as {
-      mockBackend?: backendInterface;
-    };
-
+    const mod = (await mockModules[path]()) as { mockBackend?: backendInterface };
     return mod.mockBackend ?? null;
   } catch {
     return null;
   }
 }
 
-export async function createActorWithConfig(
-  options?: CreateActorOptions,
-): Promise<backendInterface> {
-  // Attempt to load mock backend if enabled
-  const mock = await maybeLoadMockBackend();
-  if (mock) {
-    return mock;
-  }
+// Shared storage client and agent -- created once and reused for all uploads
+let sharedStorageClient: StorageClient | null = null;
+let sharedAgent: HttpAgent | null = null;
 
+export async function getSharedStorageClient(): Promise<StorageClient> {
+  if (sharedStorageClient) {
+    return sharedStorageClient;
+  }
   const config = await loadConfig();
-  const resolvedOptions = options ?? {};
-  const agent = new HttpAgent({
-    ...resolvedOptions.agentOptions,
-    host: config.backend_host,
-  });
+  const agent = new HttpAgent({ host: config.backend_host });
   if (config.backend_host?.includes("localhost")) {
     await agent.fetchRootKey().catch((err) => {
-      console.warn(
-        "Unable to fetch root key. Check to ensure that your local replica is running",
-      );
-      console.error(err);
+      console.warn("Unable to fetch root key.", err);
     });
   }
-  const actorOptions = {
-    ...resolvedOptions,
-    agent: agent,
-    processError,
-  };
-
-  const storageClient = new StorageClient(
+  sharedAgent = agent;
+  sharedStorageClient = new StorageClient(
     config.bucket_name,
     config.storage_gateway_url,
     config.backend_canister_id,
     config.project_id,
     agent,
   );
+  return sharedStorageClient;
+}
+
+export async function createActorWithConfig(
+  options?: CreateActorOptions,
+): Promise<backendInterface> {
+  const mock = await maybeLoadMockBackend();
+  if (mock) return mock;
+
+  const config = await loadConfig();
+  const resolvedOptions = options ?? {};
+  // Reuse the shared agent so storage client and actor share the same connection
+  const agent = sharedAgent ?? new HttpAgent({
+    ...resolvedOptions.agentOptions,
+    host: config.backend_host,
+  });
+  if (config.backend_host?.includes("localhost")) {
+    await agent.fetchRootKey().catch((err) => {
+      console.warn("Unable to fetch root key.", err);
+      console.error(err);
+    });
+  }
+  const actorOptions = { ...resolvedOptions, agent, processError };
+  const storageClient = await getSharedStorageClient();
 
   const MOTOKO_DEDUPLICATION_SENTINEL = "!caf!";
 
   const uploadFile = async (file: ExternalBlob): Promise<Uint8Array> => {
-    const { hash } = await storageClient.putFile(
-      await file.getBytes(),
-      file.onProgress,
-    );
+    const { hash } = await storageClient.putFile(await file.getBytes(), file.onProgress);
     return new TextEncoder().encode(MOTOKO_DEDUPLICATION_SENTINEL + hash);
   };
 
@@ -170,33 +171,5 @@ export async function createActorWithConfig(
     return ExternalBlob.fromURL(url);
   };
 
-  return createActor(
-    config.backend_canister_id,
-    uploadFile,
-    downloadFile,
-    actorOptions,
-  );
-}
-
-let sharedStorageClient: StorageClient | null = null;
-
-export async function getSharedStorageClient(): Promise<StorageClient> {
-  if (sharedStorageClient) {
-    return sharedStorageClient;
-  }
-  const config = await loadConfig();
-  const agent = new HttpAgent({
-    host: config.backend_host,
-  });
-  if (config.backend_host?.includes("localhost")) {
-    await agent.fetchRootKey().catch(console.error);
-  }
-  sharedStorageClient = new StorageClient(
-    config.bucket_name,
-    config.storage_gateway_url,
-    config.backend_canister_id,
-    config.project_id,
-    agent,
-  );
-  return sharedStorageClient;
+  return createActor(config.backend_canister_id, uploadFile, downloadFile, actorOptions);
 }
