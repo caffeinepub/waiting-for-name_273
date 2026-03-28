@@ -8,12 +8,18 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useActor } from "@/hooks/useActor";
 import {
   useDeletePerson,
   useGetAllPersons,
   usePreloadAllDocuments,
 } from "@/hooks/useQueries";
+import { generateExcel } from "@/utils/excelExport";
+import type { DocRow } from "@/utils/excelExport";
+import { extractValueFromDocument } from "@/utils/ocrExtract";
+import { getBlobUrl } from "@/utils/storageHelper";
 import {
+  FileSpreadsheet,
   Folder,
   Loader2,
   LogOut,
@@ -25,6 +31,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Page } from "../App";
+import type { Document } from "../backend.d";
 
 interface HomePageProps {
   onLogout: () => void;
@@ -35,10 +42,12 @@ export default function HomePage({ onLogout, navigate }: HomePageProps) {
   const [search, setSearch] = useState("");
   const { data: persons, isLoading } = useGetAllPersons();
   const deletePersonMutation = useDeletePerson();
+  const { actor } = useActor();
   const [deleteTarget, setDeleteTarget] = useState<{
     id: bigint;
     name: string;
   } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Pre-fetch all documents in the background so person detail pages load instantly
   usePreloadAllDocuments();
@@ -64,7 +73,6 @@ export default function HomePage({ onLogout, navigate }: HomePageProps) {
 
   function handleCardClick(id: bigint) {
     if (didLongPress.current) {
-      // long press was handled, don't navigate
       didLongPress.current = false;
       return;
     }
@@ -79,6 +87,99 @@ export default function HomePage({ onLogout, navigate }: HomePageProps) {
       setDeleteTarget(null);
     } catch {
       toast.error("Failed to delete profile");
+    }
+  }
+
+  async function handleExport() {
+    if (!actor || !persons) return;
+    setIsExporting(true);
+    try {
+      // Deduplicate persons by name (case-insensitive)
+      const seen = new Set<string>();
+      const uniquePersons = persons.filter((p) => {
+        const key = p.name.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      const allDocs: Document[] = await actor.getAllDocuments();
+
+      // Group docs by personId
+      const docsByPerson = new Map<string, Document[]>();
+      for (const doc of allDocs) {
+        const key = doc.personId.toString();
+        if (!docsByPerson.has(key)) docsByPerson.set(key, []);
+        docsByPerson.get(key)!.push(doc);
+      }
+
+      const rows: DocRow[] = await Promise.all(
+        uniquePersons.map(async (person) => {
+          const docs = docsByPerson.get(person.id.toString()) ?? [];
+
+          // For each doc type, keep most recent (highest createdAt)
+          const latestByType = new Map<string, Document>();
+          for (const doc of docs) {
+            const existing = latestByType.get(doc.docType);
+            if (!existing || doc.createdAt > existing.createdAt) {
+              latestByType.set(doc.docType, doc);
+            }
+          }
+
+          // Extract values from each document
+          const extracted = new Map<string, { value: string; dob: string }>();
+          await Promise.all(
+            Array.from(latestByType.entries()).map(async ([type, doc]) => {
+              try {
+                const url = await getBlobUrl(doc.blobId);
+                const result = await extractValueFromDocument(url, type);
+                extracted.set(type, result);
+              } catch {
+                extracted.set(type, { value: "Uploaded", dob: "" });
+              }
+            }),
+          );
+
+          // Find first non-empty DOB
+          let dob = "";
+          for (const result of extracted.values()) {
+            if (result.dob) {
+              dob = result.dob;
+              break;
+            }
+          }
+
+          const val = (type: string) => extracted.get(type)?.value ?? "";
+
+          return {
+            name: person.name,
+            dob,
+            aadhaarNo: val("Aadhaar Card"),
+            panNo: val("PAN Card"),
+            voterId: val("Voter ID"),
+            drivingLicenseNo: val("Driving License"),
+            passportNo: val("Passport"),
+            passportSizePhoto: val("Passport Size Photo"),
+            birthCertificate: val("Birth Certificate"),
+            insurancePolicy: val("Insurance Policy"),
+            rationCard: val("Ration Card"),
+            marksheet10th: val("10th Marksheet"),
+            marksheet12th: val("12th Marksheet"),
+            degreeCertificate: val("Degree Certificate"),
+            incomeCertificate: val("Income Certificate"),
+            casteCertificate: val("Caste Certificate"),
+            medicalRecords: val("Medical Records"),
+            other: val("Other"),
+          };
+        }),
+      );
+
+      generateExcel(rows);
+      toast.success("Excel file downloaded!");
+    } catch {
+      toast.error("Failed to export. Please try again.");
+    } finally {
+      setIsExporting(false);
     }
   }
 
@@ -109,16 +210,33 @@ export default function HomePage({ onLogout, navigate }: HomePageProps) {
               Family Documents
             </h1>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onLogout}
-            className="gap-2"
-            data-ocid="home.button"
-          >
-            <LogOut className="w-4 h-4" />
-            Logout
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExport}
+              disabled={isExporting}
+              className="gap-2"
+              data-ocid="home.secondary_button"
+            >
+              {isExporting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="w-4 h-4" />
+              )}
+              {isExporting ? "Exporting..." : "Export"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onLogout}
+              className="gap-2"
+              data-ocid="home.button"
+            >
+              <LogOut className="w-4 h-4" />
+              Logout
+            </Button>
+          </div>
         </div>
       </header>
 
