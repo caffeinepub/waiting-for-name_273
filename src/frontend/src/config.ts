@@ -178,23 +178,26 @@ export async function createActorWithConfig(
   );
 }
 
-// Shared StorageClient singleton for direct file uploads
-let _sharedStorageClient: import("./utils/StorageClient").StorageClient | null = null;
+// Shared StorageClient singleton used by storageHelper.ts
+let sharedStorageClientCache: import("./utils/StorageClient").StorageClient | null = null;
 
 export async function getSharedStorageClient(): Promise<import("./utils/StorageClient").StorageClient> {
-  if (_sharedStorageClient) return _sharedStorageClient;
+  if (sharedStorageClientCache) {
+    return sharedStorageClientCache;
+  }
   const config = await loadConfig();
+  const { HttpAgent } = await import("@icp-sdk/core/agent");
+  const { StorageClient } = await import("./utils/StorageClient");
   const agent = new HttpAgent({ host: config.backend_host });
   if (config.backend_host?.includes("localhost")) {
-    await agent.fetchRootKey().catch(console.error);
+    await agent.fetchRootKey().catch(() => {});
   }
-  const { StorageClient } = await import("./utils/StorageClient");
-  _sharedStorageClient = new StorageClient(
+  sharedStorageClientCache = new StorageClient(
     config.bucket_name,
     config.storage_gateway_url,
     config.backend_canister_id,
     config.project_id,
     agent,
   );
-  return _sharedStorageClient;
+  return sharedStorageClientCache;
 }

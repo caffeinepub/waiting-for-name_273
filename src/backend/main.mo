@@ -21,7 +21,6 @@ actor {
     createdAt : Int;
   };
 
-  // Stable storage: survives canister upgrades/redeployments
   stable var stableNextPersonId : Nat = 0;
   stable var stableNextDocumentId : Nat = 0;
   stable var stablePersons : [(Nat, Person)] = [];
@@ -33,17 +32,6 @@ actor {
   let persons = Map.empty<Nat, Person>();
   let documents = Map.empty<Nat, Document>();
 
-  // Restore data from stable storage on startup
-  do {
-    for ((k, v) in stablePersons.vals()) {
-      persons.add(k, v);
-    };
-    for ((k, v) in stableDocuments.vals()) {
-      documents.add(k, v);
-    };
-  };
-
-  // Save data to stable storage before upgrade
   system func preupgrade() {
     stablePersons := persons.entries().toArray();
     stableDocuments := documents.entries().toArray();
@@ -51,7 +39,16 @@ actor {
     stableNextDocumentId := nextDocumentId;
   };
 
+  // Restore data after upgrade (this runs on every upgrade, unlike actor init)
   system func postupgrade() {
+    nextPersonId := stableNextPersonId;
+    nextDocumentId := stableNextDocumentId;
+    for ((k, v) in stablePersons.vals()) {
+      persons.add(k, v);
+    };
+    for ((k, v) in stableDocuments.vals()) {
+      documents.add(k, v);
+    };
     stablePersons := [];
     stableDocuments := [];
   };
