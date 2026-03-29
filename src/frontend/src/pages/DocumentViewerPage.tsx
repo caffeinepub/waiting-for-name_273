@@ -3,32 +3,85 @@ import { getBlobUrl } from "@/utils/storageHelper";
 import { ArrowLeft, Download, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+// Detect MIME type from magic bytes — reliable regardless of server headers
+async function detectMimeFromBytes(
+  url: string,
+): Promise<{ mime: string; blob: Blob }> {
+  const resp = await fetch(url);
+  const blob = await resp.blob();
+  const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+
+  // PDF: %PDF
+  if (
+    header[0] === 0x25 &&
+    header[1] === 0x50 &&
+    header[2] === 0x44 &&
+    header[3] === 0x46
+  )
+    return { mime: "application/pdf", blob };
+  // PNG
+  if (
+    header[0] === 0x89 &&
+    header[1] === 0x50 &&
+    header[2] === 0x4e &&
+    header[3] === 0x47
+  )
+    return { mime: "image/png", blob };
+  // JPEG
+  if (header[0] === 0xff && header[1] === 0xd8)
+    return { mime: "image/jpeg", blob };
+  // GIF
+  if (header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46)
+    return { mime: "image/gif", blob };
+  // WebP: RIFF....WEBP
+  if (
+    header[0] === 0x52 &&
+    header[1] === 0x49 &&
+    header[2] === 0x46 &&
+    header[3] === 0x46 &&
+    header[8] === 0x57 &&
+    header[9] === 0x45 &&
+    header[10] === 0x42 &&
+    header[11] === 0x50
+  )
+    return { mime: "image/webp", blob };
+
+  // Fall back to whatever the server says
+  const serverMime = blob.type.split(";")[0].trim();
+  return { mime: serverMime || "application/octet-stream", blob };
+}
+
 interface Props {
   blobId: string;
   onClose: () => void;
 }
 
 export default function DocumentViewerPage({ blobId, onClose }: Props) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [directUrl, setDirectUrl] = useState<string | null>(null);
   const [mimeType, setMimeType] = useState<string>("application/octet-stream");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let createdObjectUrl: string | null = null;
+
     async function load() {
       try {
         const resolved = await getBlobUrl(blobId);
         if (cancelled) return;
-        // Try HEAD to detect content-type
-        try {
-          const head = await fetch(resolved, { method: "HEAD" });
-          const ct = head.headers.get("content-type") || "";
-          if (!cancelled)
-            setMimeType(ct.split(";")[0].trim() || "application/octet-stream");
-        } catch {
-          // ignore HEAD failure, will rely on rendering heuristics
-        }
-        if (!cancelled) setUrl(resolved);
+
+        const { mime, blob } = await detectMimeFromBytes(resolved);
+        if (cancelled) return;
+
+        // Create a typed object URL so the browser can render it correctly
+        const typedBlob = new Blob([await blob.arrayBuffer()], { type: mime });
+        const objUrl = URL.createObjectURL(typedBlob);
+        createdObjectUrl = objUrl;
+
+        setDirectUrl(resolved);
+        setObjectUrl(objUrl);
+        setMimeType(mime);
       } catch {
         if (!cancelled) setError("Failed to load document.");
       }
@@ -36,35 +89,32 @@ export default function DocumentViewerPage({ blobId, onClose }: Props) {
     load();
     return () => {
       cancelled = true;
+      if (createdObjectUrl) URL.revokeObjectURL(createdObjectUrl);
     };
   }, [blobId]);
 
   async function handleDownload() {
-    if (!url) return;
+    if (!objectUrl) return;
     try {
-      const resp = await fetch(url);
-      const blob = await resp.blob();
-      const ct = blob.type || mimeType;
-      const ext = ct.includes("pdf")
+      const ext = mimeType.includes("pdf")
         ? "pdf"
-        : ct.includes("png")
+        : mimeType.includes("png")
           ? "png"
-          : ct.includes("gif")
+          : mimeType.includes("gif")
             ? "gif"
-            : ct.includes("webp")
+            : mimeType.includes("webp")
               ? "webp"
               : "jpg";
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
+      a.href = objectUrl;
       a.download = `document.${ext}`;
       a.click();
-      URL.revokeObjectURL(a.href);
     } catch {
-      window.open(url, "_blank");
+      if (directUrl) window.open(directUrl, "_blank");
     }
   }
 
-  const isPdf = mimeType.includes("pdf");
+  const isPdf = mimeType === "application/pdf";
   const isImage = mimeType.startsWith("image/");
 
   return (
@@ -90,7 +140,7 @@ export default function DocumentViewerPage({ blobId, onClose }: Props) {
           variant="outline"
           size="sm"
           onClick={handleDownload}
-          disabled={!url}
+          disabled={!objectUrl}
           data-ocid="document_viewer.download_button"
         >
           <Download className="h-4 w-4 mr-2" />
@@ -110,7 +160,7 @@ export default function DocumentViewerPage({ blobId, onClose }: Props) {
           </div>
         )}
 
-        {!url && !error && (
+        {!objectUrl && !error && (
           <div
             className="flex flex-col items-center gap-3"
             data-ocid="document_viewer.loading_state"
@@ -120,13 +170,13 @@ export default function DocumentViewerPage({ blobId, onClose }: Props) {
           </div>
         )}
 
-        {url && isPdf && (
+        {objectUrl && isPdf && (
           <div
             className="w-full flex-1 flex flex-col"
             style={{ height: "calc(100vh - 64px)" }}
           >
             <iframe
-              src={url}
+              src={objectUrl}
               className="w-full flex-1 border-0 rounded"
               style={{ height: "100%", minHeight: "500px" }}
               title="Document Viewer"
@@ -134,7 +184,7 @@ export default function DocumentViewerPage({ blobId, onClose }: Props) {
             <p className="text-xs text-center text-muted-foreground mt-2">
               PDF not loading?{" "}
               <a
-                href={url}
+                href={directUrl ?? objectUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline text-primary"
@@ -145,25 +195,26 @@ export default function DocumentViewerPage({ blobId, onClose }: Props) {
           </div>
         )}
 
-        {url && isImage && (
+        {objectUrl && isImage && (
           <img
-            src={url}
+            src={objectUrl}
             alt="Document"
             className="max-w-full max-h-full object-contain rounded shadow-md"
             style={{ maxHeight: "calc(100vh - 100px)" }}
           />
         )}
 
-        {url && !isPdf && !isImage && (
+        {objectUrl && !isPdf && !isImage && (
           <div className="text-center">
             <p className="text-muted-foreground mb-4">
-              Preview not available for this file type.
+              This file type cannot be previewed. Use the Download button above.
             </p>
             <Button
-              onClick={() => window.open(url, "_blank")}
+              onClick={handleDownload}
               data-ocid="document_viewer.primary_button"
             >
-              Open in Browser
+              <Download className="h-4 w-4 mr-2" />
+              Download File
             </Button>
           </div>
         )}
