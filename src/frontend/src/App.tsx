@@ -1,6 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { useState } from "react";
 import AddDocumentPage from "./pages/AddDocumentPage";
+import DocumentViewerPage from "./pages/DocumentViewerPage";
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
 import PersonDetailPage from "./pages/PersonDetailPage";
@@ -15,10 +16,15 @@ export default function App() {
     () => localStorage.getItem("family_auth") === "true",
   );
   const [page, setPage] = useState<Page>({ name: "home" });
+  const [viewerBlobId, setViewerBlobId] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("view");
+  });
 
   function handleLogin() {
     localStorage.setItem("family_auth", "true");
     setIsLoggedIn(true);
+    // viewerBlobId is already set from URL param if present; no extra action needed
   }
 
   function handleLogout() {
@@ -35,6 +41,21 @@ export default function App() {
     return (
       <>
         <LoginPage onLogin={handleLogin} />
+        <Toaster />
+      </>
+    );
+  }
+
+  if (viewerBlobId) {
+    return (
+      <>
+        <DocumentViewerPage
+          blobId={viewerBlobId}
+          onClose={() => {
+            setViewerBlobId(null);
+            window.history.replaceState({}, "", window.location.pathname);
+          }}
+        />
         <Toaster />
       </>
     );

@@ -1,42 +1,32 @@
-# Family Documents - Excel Export Feature
+# FamilyDoc
 
 ## Current State
-The app is a family document manager with shared credentials. The Home page has a header with a Folder icon, title "Family Documents", and a Logout button. Person cards are shown in a grid. Documents are stored as blobs via blob-storage, with types from DOCUMENT_TYPES list in PersonDetailPage.tsx. The backend exposes `getAllPersons()`, `getAllDocuments()`, and individual document/person queries.
+App is a shared-credential family document manager. Three critical bugs exist:
+1. `storageHelper.ts` imports `getSharedStorageClient` from `config.ts` but the function is never defined/exported there -- all uploads crash
+2. `StorageClient.putFile` signature only accepts `(blobBytes, onProgress)` but `storageHelper.ts` calls it with `(bytes, onProgress, mimeType, filename)` -- mimeType/filename are silently ignored, all files stored as `application/octet-stream`
+3. Excel 'Uploaded' links open raw blob URLs without auth gate; user wants Option B: open in browser viewer (Chrome native PDF/image viewer), auth-protected
 
 ## Requested Changes (Diff)
 
 ### Add
-- **Export to Excel button** in the Home page header, placed immediately beside the Logout button
-- **Excel generation utility** (`src/frontend/src/utils/excelExport.ts`) that:
-  - Takes persons and their documents as input
-  - Uses `xlsx` (SheetJS) library to generate an `.xlsx` file
-  - Columns (in order): Name, DOB, Aadhaar No., PAN No., Voter ID, Driving License No., Passport No., Passport Size Photo, Birth Certificate, Insurance Policy, Ration Card, 10th Marksheet, 12th Marksheet, Degree Certificate, Income Certificate, Caste Certificate, Medical Records, Other
-  - For each person row, fills cells based on their documents
-- **OCR extraction utility** (`src/frontend/src/utils/ocrExtract.ts`) using `tesseract.js` that:
-  - Accepts an image blob URL and a document type
-  - Runs OCR to extract text from the image
-  - Applies regex patterns to extract:
-    - Aadhaar No.: 12-digit number (e.g., `XXXX XXXX XXXX`)
-    - PAN No.: format `ABCDE1234F` (5 letters, 4 digits, 1 letter)
-    - DOB: common date formats (DD/MM/YYYY, DD-MM-YYYY, etc.)
-    - Voter ID: format `ABC1234567` (3 letters + 7 digits)
-    - Driving License: 16-character alphanumeric (state code + digits)
-    - Passport No.: format `A1234567` (1 letter + 7 digits)
-  - Returns extracted value or `"Uploaded"` as fallback if extraction fails
-  - For PDFs (non-image blobs), returns `"Uploaded"` without attempting OCR
+- Export `getSharedStorageClient` from `config.ts` -- creates and caches a StorageClient using loaded config
+- New `DocumentViewerPage` component: full-screen viewer that shows a PDF in iframe or image full-screen; has a Download button; triggered by `?view=BLOBID` URL param
+- App.tsx: on load, detect `?view=` query param; store pending blob in sessionStorage; after login, auto-open viewer
+- `storageHelper.ts` `getBlobUrl`: add `?inline=true` or ensure URL resolves to viewable format
 
 ### Modify
-- **HomePage.tsx**: Add Export button next to Logout, add export logic that fetches blob URLs for all documents, runs OCR on images, and triggers download of the Excel file
+- `StorageClient.putFile(blobBytes, onProgress?, mimeType?, filename?)`: accept and use mimeType in fileHeaders (`Content-Type` set to actual mimeType), `Content-Disposition: inline` so browser renders inline
+- `excelExport.ts`: Excel 'Uploaded' URLs should point to `appBaseUrl?view=BLOBID` (app URL with view param), not raw blob URL
+- `HomePage.tsx` `handleExport`: pass app base URL to be embedded in Excel links
+- `App.tsx`: detect `?view=` param on load; if not logged in, store param and show login; after login navigate to viewer
 
 ### Remove
 - Nothing removed
 
 ## Implementation Plan
-1. Install `xlsx` and `tesseract.js` packages in frontend
-2. Create `src/frontend/src/utils/ocrExtract.ts` — OCR helper with pattern extraction per doc type
-3. Create `src/frontend/src/utils/excelExport.ts` — builds worksheet data and triggers `.xlsx` download using SheetJS
-4. Update `HomePage.tsx`:
-   - Add `FileSpreadsheet` icon import from lucide-react
-   - Add Export button next to Logout button in header
-   - On click: show loading state, fetch all persons + documents, run OCR on each document image, build Excel, download
-5. Validate (lint + typecheck + build)
+1. Add `getSharedStorageClient` export to `config.ts`
+2. Update `StorageClient.putFile` to accept `mimeType` and `filename`, use them in `fileHeaders` with `Content-Disposition: inline`
+3. Add `DocumentViewerPage.tsx` -- full-screen viewer with iframe (PDF) or img (image), plus Download button
+4. Update `App.tsx` to handle `?view=BLOBID` param -- store in sessionStorage if not logged in, resolve after login
+5. Update `excelExport.ts` to accept and embed app base URL in 'Uploaded' hyperlinks
+6. Update `HomePage.tsx` to pass `window.location.origin + window.location.pathname` when calling generateExcel

@@ -247,15 +247,19 @@ function UpdateDocumentDialog({
       if (typeChanged) {
         let blobId = doc.blobId;
         if (hasNewFile) {
-          blobId = await uploadFileAndGetBlobId(selectedFile!, (pct) =>
-            setUploadProgress(pct),
+          blobId = await uploadFileAndGetBlobId(
+            selectedFile!,
+            (pct) => setUploadProgress(pct),
+            docType,
           );
         }
         await deleteDocMutation.mutateAsync({ documentId: doc.id, personId });
         await addDocMutation.mutateAsync({ personId, docType, blobId });
       } else if (hasNewFile) {
-        const blobId = await uploadFileAndGetBlobId(selectedFile!, (pct) =>
-          setUploadProgress(pct),
+        const blobId = await uploadFileAndGetBlobId(
+          selectedFile!,
+          (pct) => setUploadProgress(pct),
+          docType,
         );
         await updateDocMutation.mutateAsync({
           documentId: doc.id,

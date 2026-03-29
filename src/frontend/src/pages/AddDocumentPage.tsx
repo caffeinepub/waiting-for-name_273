@@ -147,8 +147,10 @@ export default function AddDocumentPage({
 
     setIsSaving(true);
     try {
-      const blobId = await uploadFileAndGetBlobId(selectedFile, (pct) =>
-        setUploadProgress(pct),
+      const blobId = await uploadFileAndGetBlobId(
+        selectedFile,
+        (pct) => setUploadProgress(pct),
+        docType,
       );
 
       let personId: bigint;

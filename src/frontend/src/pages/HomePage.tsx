@@ -136,10 +136,13 @@ export default function HomePage({ onLogout, navigate }: HomePageProps) {
               try {
                 const url = await getBlobUrl(doc.blobId);
                 const result = await extractValueFromDocument(url, type);
-                extracted.set(type, { ...result, url });
+                extracted.set(type, { ...result, url: doc.blobId });
               } catch {
-                const url = await getBlobUrl(doc.blobId).catch(() => "");
-                extracted.set(type, { value: "Uploaded", dob: "", url });
+                extracted.set(type, {
+                  value: "Uploaded",
+                  dob: "",
+                  url: doc.blobId,
+                });
               }
             }),
           );
@@ -184,7 +187,11 @@ export default function HomePage({ onLogout, navigate }: HomePageProps) {
         }),
       );
 
-      await generateExcel(rows);
+      await generateExcel(
+        rows,
+        undefined,
+        window.location.origin + window.location.pathname,
+      );
       toast.success("Excel file downloaded!");
     } catch {
       toast.error("Failed to export. Please try again.");

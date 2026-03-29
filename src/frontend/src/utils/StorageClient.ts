@@ -499,20 +499,24 @@ export class StorageClient {
     blobBytes: Uint8Array,
     onProgress?: (percentage: number) => void,
     mimeType?: string,
+    filename?: string,
   ): Promise<{ hash: string }> {
-    const resolvedMimeType = mimeType || "application/octet-stream";
+    const resolvedMime = mimeType || "application/octet-stream";
     // HTTP headers for fetch requests (used for the PUT request to gateway)
     const httpHeaders: Headers = {
       "Content-Type": "application/json",
     };
-    // Create a Blob from the bytes with the correct MIME type
+    // Create a Blob from the bytes
     const file = new Blob([new Uint8Array(blobBytes)], {
-      type: resolvedMimeType,
+      type: resolvedMime,
     });
     // File metadata headers that will be stored with the blob tree
     const fileHeaders: Headers = {
-      "Content-Type": resolvedMimeType,
+      "Content-Type": resolvedMime,
       "Content-Length": file.size.toString(),
+      "Content-Disposition": filename
+        ? `inline; filename="${filename}"`
+        : "inline",
     };
 
     const { chunks, chunkHashes, blobHashTree } =

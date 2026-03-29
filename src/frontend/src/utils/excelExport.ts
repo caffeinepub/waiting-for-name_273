@@ -40,6 +40,7 @@ function loadXlsx(): Promise<any> {
 export async function generateExcel(
   rows: DocRow[],
   filename = "family-documents.xlsx",
+  appBaseUrl?: string,
 ): Promise<void> {
   const XLSX = await loadXlsx();
 
@@ -114,7 +115,10 @@ export async function generateExcel(
         const excelRowIdx = rowIdx + 1; // +1 for header row
         const cellAddr = XLSX.utils.encode_cell({ r: excelRowIdx, c: colIdx });
         if (ws[cellAddr]) {
-          ws[cellAddr].l = { Target: cell.url, Tooltip: "View document" };
+          const viewUrl = appBaseUrl
+            ? `${appBaseUrl}?view=${encodeURIComponent(cell.url)}`
+            : cell.url;
+          ws[cellAddr].l = { Target: viewUrl, Tooltip: "View document" };
         }
       }
     });
