@@ -1,8 +1,24 @@
+// Dynamically load tesseract.js from CDN
+function loadTesseract(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).Tesseract) {
+      resolve((window as any).Tesseract);
+      return;
+    }
+    const script = document.createElement("script");
+    script.src =
+      "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    script.onload = () => resolve((window as any).Tesseract);
+    script.onerror = () => reject(new Error("Failed to load tesseract.js"));
+    document.head.appendChild(script);
+  });
+}
+
 export async function extractTextFromImageUrl(
   imageUrl: string,
 ): Promise<string> {
-  const { createWorker } = await import("tesseract.js");
-  const worker = await createWorker("eng");
+  const Tesseract = await loadTesseract();
+  const worker = await Tesseract.createWorker("eng");
   try {
     const { data } = await worker.recognize(imageUrl);
     return data.text;

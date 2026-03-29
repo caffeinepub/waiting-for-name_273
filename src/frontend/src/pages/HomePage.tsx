@@ -15,7 +15,7 @@ import {
   usePreloadAllDocuments,
 } from "@/hooks/useQueries";
 import { generateExcel } from "@/utils/excelExport";
-import type { DocRow } from "@/utils/excelExport";
+import type { CellValue, DocRow } from "@/utils/excelExport";
 import { extractValueFromDocument } from "@/utils/ocrExtract";
 import { getBlobUrl } from "@/utils/storageHelper";
 import {
@@ -127,15 +127,19 @@ export default function HomePage({ onLogout, navigate }: HomePageProps) {
           }
 
           // Extract values from each document
-          const extracted = new Map<string, { value: string; dob: string }>();
+          const extracted = new Map<
+            string,
+            { value: string; dob: string; url: string }
+          >();
           await Promise.all(
             Array.from(latestByType.entries()).map(async ([type, doc]) => {
               try {
                 const url = await getBlobUrl(doc.blobId);
                 const result = await extractValueFromDocument(url, type);
-                extracted.set(type, result);
+                extracted.set(type, { ...result, url });
               } catch {
-                extracted.set(type, { value: "Uploaded", dob: "" });
+                const url = await getBlobUrl(doc.blobId).catch(() => "");
+                extracted.set(type, { value: "Uploaded", dob: "", url });
               }
             }),
           );
@@ -149,7 +153,13 @@ export default function HomePage({ onLogout, navigate }: HomePageProps) {
             }
           }
 
-          const val = (type: string) => extracted.get(type)?.value ?? "";
+          const val = (type: string): CellValue => {
+            const entry = extracted.get(type);
+            if (!entry || !entry.value) return { text: "" };
+            if (entry.value === "Uploaded")
+              return { text: "Uploaded", url: entry.url };
+            return { text: entry.value };
+          };
 
           return {
             name: person.name,
@@ -174,7 +184,7 @@ export default function HomePage({ onLogout, navigate }: HomePageProps) {
         }),
       );
 
-      generateExcel(rows);
+      await generateExcel(rows);
       toast.success("Excel file downloaded!");
     } catch {
       toast.error("Failed to export. Please try again.");
