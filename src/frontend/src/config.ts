@@ -28,6 +28,26 @@ interface Config {
 }
 
 let configCache: Config | null = null;
+let sharedStorageClientCache: StorageClient | null = null;
+
+export async function getSharedStorageClient(): Promise<StorageClient> {
+  if (sharedStorageClientCache) {
+    return sharedStorageClientCache;
+  }
+  const config = await loadConfig();
+  const agent = new HttpAgent({ host: config.backend_host });
+  if (config.backend_host?.includes("localhost")) {
+    await agent.fetchRootKey().catch(() => {});
+  }
+  sharedStorageClientCache = new StorageClient(
+    config.bucket_name,
+    config.storage_gateway_url,
+    config.backend_canister_id,
+    config.project_id,
+    agent,
+  );
+  return sharedStorageClientCache;
+}
 
 export async function loadConfig(): Promise<Config> {
   if (configCache) {
@@ -114,35 +134,6 @@ async function maybeLoadMockBackend(): Promise<backendInterface | null> {
   } catch {
     return null;
   }
-}
-
-// Shared StorageClient cache -- created once and reused for all uploads
-let sharedStorageClient: StorageClient | null = null;
-
-export async function getSharedStorageClient(): Promise<StorageClient> {
-  if (sharedStorageClient) {
-    return sharedStorageClient;
-  }
-  const config = await loadConfig();
-  const agent = new HttpAgent({
-    host: config.backend_host,
-  });
-  if (config.backend_host?.includes("localhost")) {
-    await agent.fetchRootKey().catch((err) => {
-      console.warn(
-        "Unable to fetch root key. Check to ensure that your local replica is running",
-      );
-      console.error(err);
-    });
-  }
-  sharedStorageClient = new StorageClient(
-    config.bucket_name,
-    config.storage_gateway_url,
-    config.backend_canister_id,
-    config.project_id,
-    agent,
-  );
-  return sharedStorageClient;
 }
 
 export async function createActorWithConfig(

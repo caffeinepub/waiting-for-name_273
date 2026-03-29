@@ -110,12 +110,37 @@ async function detectMimeType(blob: Blob): Promise<string> {
   return blob.type || "image/jpeg";
 }
 
-function mimeToExt(mimeType: string): string {
-  if (mimeType.includes("pdf")) return "pdf";
-  if (mimeType.includes("png")) return "png";
-  if (mimeType.includes("gif")) return "gif";
-  if (mimeType.includes("webp")) return "webp";
-  if (mimeType.includes("heic") || mimeType.includes("heif")) return "heic";
+// Infer extension directly from raw bytes (most reliable)
+async function inferExtFromBytes(blob: Blob): Promise<string> {
+  const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  if (
+    header[0] === 0x25 &&
+    header[1] === 0x50 &&
+    header[2] === 0x44 &&
+    header[3] === 0x46
+  )
+    return "pdf";
+  if (
+    header[0] === 0x89 &&
+    header[1] === 0x50 &&
+    header[2] === 0x4e &&
+    header[3] === 0x47
+  )
+    return "png";
+  if (header[0] === 0xff && header[1] === 0xd8) return "jpg";
+  if (header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46)
+    return "gif";
+  if (
+    header[0] === 0x52 &&
+    header[1] === 0x49 &&
+    header[2] === 0x46 &&
+    header[3] === 0x46 &&
+    header[8] === 0x57 &&
+    header[9] === 0x45 &&
+    header[10] === 0x42 &&
+    header[11] === 0x50
+  )
+    return "webp";
   return "jpg";
 }
 
@@ -690,31 +715,53 @@ function DocCard({
   }
 
   async function handleDownload() {
-    if (!blobUrl || !mimeType) return;
+    if (!blobUrl) return;
     try {
       const response = await fetch(blobUrl);
-      const _blob = await response.blob();
-      const ext = mimeToExt(mimeType);
+      const rawBlob = await response.blob();
+      // Infer extension from actual file bytes - reliable regardless of stored MIME type
+      const ext = await inferExtFromBytes(rawBlob);
       const filename = `${doc.docType}.${ext}`;
+      // Create a typed blob so the browser downloads it in the correct format
+      const mimeMap: Record<string, string> = {
+        pdf: "application/pdf",
+        png: "image/png",
+        gif: "image/gif",
+        webp: "image/webp",
+        jpg: "image/jpeg",
+      };
+      const typedBlob = new Blob([await rawBlob.arrayBuffer()], {
+        type: mimeMap[ext] || "application/octet-stream",
+      });
+      const downloadUrl = URL.createObjectURL(typedBlob);
       const a = document.createElement("a");
-      a.href = blobUrl;
+      a.href = downloadUrl;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 5000);
     } catch {
       toast.error("Failed to download document");
     }
   }
 
   async function handleShare() {
-    if (!blobUrl || !mimeType) return;
+    if (!blobUrl) return;
     try {
       const response = await fetch(blobUrl);
-      const _blob = await response.blob();
-      const ext = mimeToExt(mimeType);
+      const rawBlob = await response.blob();
+      const ext = await inferExtFromBytes(rawBlob);
+      const mimeMap: Record<string, string> = {
+        pdf: "application/pdf",
+        png: "image/png",
+        gif: "image/gif",
+        webp: "image/webp",
+        jpg: "image/jpeg",
+      };
+      const detectedMime = mimeMap[ext] || "application/octet-stream";
       const filename = `${doc.docType}.${ext}`;
-      const file = new File([_blob], filename, { type: mimeType });
+      const file = new File([rawBlob], filename, { type: detectedMime });
 
       if (
         navigator.share &&
