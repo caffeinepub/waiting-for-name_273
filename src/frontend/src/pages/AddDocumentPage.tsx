@@ -232,7 +232,7 @@ export default function AddDocumentPage({
             >
               <SelectValue placeholder="Select document type..." />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="max-h-60 overflow-y-auto">
               {DOCUMENT_TYPES.map((dt) => (
                 <SelectItem key={dt} value={dt}>
                   {dt}
