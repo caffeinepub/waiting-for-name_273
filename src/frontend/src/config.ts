@@ -80,35 +80,6 @@ export async function loadConfig(): Promise<Config> {
   }
 }
 
-// Shared StorageClient singleton — used by storageHelper.ts for uploads and URL resolution
-let sharedStorageClientCache: StorageClient | null = null;
-let sharedAgentCache: HttpAgent | null = null;
-
-export async function getSharedStorageClient(): Promise<StorageClient> {
-  if (sharedStorageClientCache) {
-    return sharedStorageClientCache;
-  }
-  const config = await loadConfig();
-  const agent = new HttpAgent({
-    host: config.backend_host,
-  });
-  if (config.backend_host?.includes("localhost")) {
-    await agent.fetchRootKey().catch((err) => {
-      console.warn("Unable to fetch root key.");
-      console.error(err);
-    });
-  }
-  sharedAgentCache = agent;
-  sharedStorageClientCache = new StorageClient(
-    config.bucket_name,
-    config.storage_gateway_url,
-    config.backend_canister_id,
-    config.project_id,
-    agent,
-  );
-  return sharedStorageClientCache;
-}
-
 function extractAgentErrorMessage(error: string): string {
   const errorString = String(error);
   const match = errorString.match(/with message:\s*'([^']+)'/s);
@@ -128,12 +99,17 @@ async function maybeLoadMockBackend(): Promise<backendInterface | null> {
   }
 
   try {
+    // If VITE_USE_MOCK is enabled, try to load a mock backend module *if it exists*.
+    // We use import.meta.glob so builds don't fail when the mock file is absent.
     const mockModules = import.meta.glob("./mocks/backend.{ts,tsx,js,jsx}");
+
     const path = Object.keys(mockModules)[0];
     if (!path) return null;
+
     const mod = (await mockModules[path]()) as {
       mockBackend?: backendInterface;
     };
+
     return mod.mockBackend ?? null;
   } catch {
     return null;
@@ -143,6 +119,7 @@ async function maybeLoadMockBackend(): Promise<backendInterface | null> {
 export async function createActorWithConfig(
   options?: CreateActorOptions,
 ): Promise<backendInterface> {
+  // Attempt to load mock backend if enabled
   const mock = await maybeLoadMockBackend();
   if (mock) {
     return mock;
@@ -201,5 +178,23 @@ export async function createActorWithConfig(
   );
 }
 
-// Suppress unused variable warning
-void sharedAgentCache;
+// Shared StorageClient singleton for direct file uploads
+let _sharedStorageClient: import("./utils/StorageClient").StorageClient | null = null;
+
+export async function getSharedStorageClient(): Promise<import("./utils/StorageClient").StorageClient> {
+  if (_sharedStorageClient) return _sharedStorageClient;
+  const config = await loadConfig();
+  const agent = new HttpAgent({ host: config.backend_host });
+  if (config.backend_host?.includes("localhost")) {
+    await agent.fetchRootKey().catch(console.error);
+  }
+  const { StorageClient } = await import("./utils/StorageClient");
+  _sharedStorageClient = new StorageClient(
+    config.bucket_name,
+    config.storage_gateway_url,
+    config.backend_canister_id,
+    config.project_id,
+    agent,
+  );
+  return _sharedStorageClient;
+}

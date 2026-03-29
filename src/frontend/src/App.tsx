@@ -23,8 +23,9 @@ export default function App() {
   const queryClient = useQueryClient();
 
   function handleLogin() {
-    // Clear any stale cached data so we always fetch fresh on login
-    queryClient.clear();
+    // Invalidate data queries so they refetch fresh, but keep actor cached for instant load
+    queryClient.invalidateQueries({ queryKey: ["persons"] });
+    queryClient.invalidateQueries({ queryKey: ["allDocuments"] });
     setIsLoggedIn(true);
   }
 
