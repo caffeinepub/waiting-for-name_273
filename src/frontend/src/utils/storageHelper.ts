@@ -2,7 +2,7 @@ import { getSharedStorageClient } from "../config";
 
 const MOTOKO_DEDUPLICATION_SENTINEL = "!caf!";
 
-function detectMimeType(bytes: Uint8Array): string {
+export function detectMimeType(bytes: Uint8Array): string {
   // PDF: %PDF
   if (
     bytes[0] === 0x25 &&
@@ -61,12 +61,14 @@ export async function uploadFileAndGetBlobId(
 ): Promise<string> {
   const client = await getSharedStorageClient();
   const bytes = new Uint8Array(await file.arrayBuffer());
-  // Use File.type if available and meaningful, otherwise detect from magic bytes
+
+  // Determine correct MIME type: prefer file's declared type, fall back to magic-byte detection
   let mimeType = (file as File).type || "";
   if (!mimeType || mimeType === "application/octet-stream") {
     mimeType = detectMimeType(bytes);
   }
-  const { hash } = await client.putFile(bytes, onProgress);
+
+  const { hash } = await client.putFile(bytes, onProgress, mimeType);
   return MOTOKO_DEDUPLICATION_SENTINEL + hash;
 }
 

@@ -498,18 +498,21 @@ export class StorageClient {
   public async putFile(
     blobBytes: Uint8Array,
     onProgress?: (percentage: number) => void,
+    contentType?: string,
   ): Promise<{ hash: string }> {
+    const resolvedContentType = contentType || "application/octet-stream";
+
     // HTTP headers for fetch requests (used for the PUT request to gateway)
     const httpHeaders: Headers = {
       "Content-Type": "application/json",
     };
-    // Create a Blob from the bytes
+    // Create a Blob from the bytes with the correct MIME type
     const file = new Blob([new Uint8Array(blobBytes)], {
-      type: "application/octet-stream",
+      type: resolvedContentType,
     });
     // File metadata headers that will be stored with the blob tree
     const fileHeaders: Headers = {
-      "Content-Type": "application/octet-stream",
+      "Content-Type": resolvedContentType,
       "Content-Length": file.size.toString(),
     };
 
