@@ -74,7 +74,7 @@ export default function DocumentViewerPage({ blobId, onClose }: Props) {
         const { mime, blob } = await detectMimeFromBytes(resolved);
         if (cancelled) return;
 
-        // Create a typed object URL so the browser can render it correctly
+        // Create a typed object URL for images and downloads
         const typedBlob = new Blob([await blob.arrayBuffer()], { type: mime });
         const objUrl = URL.createObjectURL(typedBlob);
         createdObjectUrl = objUrl;
@@ -116,6 +116,11 @@ export default function DocumentViewerPage({ blobId, onClose }: Props) {
 
   const isPdf = mimeType === "application/pdf";
   const isImage = mimeType.startsWith("image/");
+
+  // Google Docs Viewer URL for PDFs — works on all devices including mobile
+  const googleViewerUrl = directUrl
+    ? `https://docs.google.com/viewer?url=${encodeURIComponent(directUrl)}&embedded=true`
+    : null;
 
   return (
     <div
@@ -170,26 +175,27 @@ export default function DocumentViewerPage({ blobId, onClose }: Props) {
           </div>
         )}
 
-        {objectUrl && isPdf && (
+        {objectUrl && isPdf && googleViewerUrl && (
           <div
             className="w-full flex-1 flex flex-col"
             style={{ height: "calc(100vh - 64px)" }}
           >
             <iframe
-              src={objectUrl}
+              src={googleViewerUrl}
               className="w-full flex-1 border-0 rounded"
               style={{ height: "100%", minHeight: "500px" }}
               title="Document Viewer"
+              allow="autoplay"
             />
             <p className="text-xs text-center text-muted-foreground mt-2">
               PDF not loading?{" "}
               <a
-                href={directUrl ?? objectUrl}
+                href={directUrl ?? ""}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline text-primary"
               >
-                Open in browser
+                Open directly
               </a>
             </p>
           </div>

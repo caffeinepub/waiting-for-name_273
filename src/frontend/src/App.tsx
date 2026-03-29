@@ -1,4 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import AddDocumentPage from "./pages/AddDocumentPage";
 import DocumentViewerPage from "./pages/DocumentViewerPage";
@@ -12,23 +13,23 @@ export type Page =
   | { name: "addDocument"; prefillPersonId?: bigint };
 
 export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(
-    () => localStorage.getItem("family_auth") === "true",
-  );
+  // Always start logged out — never persist login in localStorage for security
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [page, setPage] = useState<Page>({ name: "home" });
   const [viewerBlobId, setViewerBlobId] = useState<string | null>(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("view");
   });
+  const queryClient = useQueryClient();
 
   function handleLogin() {
-    localStorage.setItem("family_auth", "true");
+    // Clear any stale cached data so we always fetch fresh on login
+    queryClient.clear();
     setIsLoggedIn(true);
-    // viewerBlobId is already set from URL param if present; no extra action needed
   }
 
   function handleLogout() {
-    localStorage.removeItem("family_auth");
+    queryClient.clear();
     setIsLoggedIn(false);
     setPage({ name: "home" });
   }

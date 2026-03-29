@@ -18,6 +18,7 @@ const DOMAIN_SEPARATOR_FOR_METADATA = new TextEncoder().encode(
 );
 const DOMAIN_SEPARATOR_FOR_NODES = new TextEncoder().encode("ynode/");
 
+// Utility function for exponential backoff retry logic - retries on network/server errors only
 async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
   let lastError: Error | undefined;
 
@@ -27,8 +28,10 @@ async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
+      // Check if this error should be retried
       const shouldRetry = isRetriableError(error);
 
+      // On the final attempt or non-retriable error, throw the error
       if (attempt === MAX_RETRIES || !shouldRetry) {
         if (!shouldRetry && attempt < MAX_RETRIES) {
           console.warn(
@@ -38,6 +41,7 @@ async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
         throw error;
       }
 
+      // Calculate delay with exponential backoff and jitter
       const delay = Math.min(
         BASE_DELAY_MS * 2 ** attempt + Math.random() * 1000,
         MAX_DELAY_MS,
@@ -51,19 +55,25 @@ async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
     }
   }
 
+  // This should never happen due to the loop logic, but TypeScript needs it
   throw lastError || new Error("Unknown error occurred during retry attempts");
 }
 
 function isRetriableError(error: any): boolean {
   const errorMessage = error?.message?.toLowerCase() || "";
 
+  // Don't retry client errors (4xx except specific ones)
   if (error?.response?.status) {
     const status = error.response.status;
+    // Only retry these 4xx errors
     if (status === 408 || status === 429) return true;
+    // Don't retry other 4xx client errors
     if (status >= 400 && status < 500) return false;
+    // Retry 5xx server errors
     if (status >= 500) return true;
   }
 
+  // Retry network/SSL errors
   if (
     errorMessage.includes("ssl") ||
     errorMessage.includes("tls") ||
@@ -75,6 +85,7 @@ function isRetriableError(error: any): boolean {
     return true;
   }
 
+  // Don't retry validation/logic errors
   if (
     errorMessage.includes("validation") ||
     errorMessage.includes("invalid") ||
@@ -86,9 +97,11 @@ function isRetriableError(error: any): boolean {
     return false;
   }
 
+  // Default to retry for unknown errors (conservative approach for network issues)
   return true;
 }
 
+// Hash validation utility
 function validateHashFormat(hash: string, context: string): void {
   if (!hash) {
     throw new Error(`${context}: Hash cannot be empty`);
@@ -100,7 +113,7 @@ function validateHashFormat(hash: string, context: string): void {
     );
   }
 
-  const hexPart = hash.substring(SHA256_PREFIX.length);
+  const hexPart = hash.substring(SHA256_PREFIX.length); // Remove 'sha256:' prefix
   if (hexPart.length !== 64) {
     throw new Error(
       `${context}: Invalid hash format. Expected 64 hex characters after ${SHA256_PREFIX}, got ${hexPart.length} characters: ${hash}`,
@@ -154,12 +167,15 @@ class YHash {
   }
 
   static async fromHeaders(headers: Headers): Promise<YHash> {
+    // For each key,value, generate the header line "key: value\n" where the key and value are trimmed.
     const headerLines: string[] = [];
     for (const [key, value] of Object.entries(headers)) {
       headerLines.push(`${key.trim()}: ${value.trim()}\n`);
     }
+    // Sort the header lines alphabetically.
     headerLines.sort();
 
+    // Hash the header lines, with the metadata domain separator.
     const hash = await YHash.fromBytes(
       DOMAIN_SEPARATOR_FOR_METADATA,
       new TextEncoder().encode(headerLines.join("")),
@@ -259,18 +275,21 @@ class BlobHashTree {
     headers: Headers = {},
   ): Promise<BlobHashTree> {
     if (chunkHashes.length === 0) {
+      // To match rust, we have the hash of nothing
       const hex =
         "8b8e620f084e48da0be2287fd12c5aaa4dbe14b468fd2e360f48d741fe7628a0";
       const bytes = new TextEncoder().encode(hex);
       chunkHashes.push(new YHash(bytes));
     }
 
+    // Create leaf nodes for each chunk hash
     let level: TreeNode[] = chunkHashes.map((hash) => ({
       hash,
       left: null,
       right: null,
     }));
 
+    // Build tree bottom-up
     while (level.length > 1) {
       const nextLevel: TreeNode[] = [];
       for (let i = 0; i < level.length; i += 2) {
@@ -292,6 +311,7 @@ class BlobHashTree {
 
     const chunksRoot = level[0];
 
+    // If headers exist and have content, create combined tree
     if (headers && Object.keys(headers).length > 0) {
       const metadataRootHash = await YHash.fromHeaders(headers);
       const metadataRoot: TreeNode = {
@@ -345,6 +365,7 @@ class StorageGatewayClient {
   public async uploadChunk(
     params: UploadChunkParams,
   ): Promise<{ isComplete: boolean }> {
+    // Validate hash formats before sending to server (validation errors should not be retried)
     const blobHashString = params.blobRootHash.toShaString();
     const chunkHashString = params.chunkHash.toShaString();
     validateHashFormat(
@@ -357,6 +378,7 @@ class StorageGatewayClient {
     );
 
     return await withRetry(async () => {
+      // Use query parameters for metadata and raw bytes in body
       const queryParams = new URLSearchParams({
         owner_id: params.owner,
         blob_hash: blobHashString,
@@ -381,6 +403,7 @@ class StorageGatewayClient {
         const error = new Error(
           `Failed to upload chunk ${params.chunkIndex}: ${response.status} ${response.statusText} - ${errorText}`,
         );
+        // Add response status for retry logic
         (error as any).response = { status: response.status };
         throw error;
       }
@@ -402,6 +425,7 @@ class StorageGatewayClient {
     projectId: string,
     certificateBytes: Uint8Array,
   ): Promise<void> {
+    // Validate all hashes in the tree before sending to server (validation errors should not be retried)
     const treeJSON = blobHashTree.toJSON();
     validateHashFormat(treeJSON.tree.hash, "uploadBlobTree root hash");
     treeJSON.chunk_hashes.forEach((hash, index) => {
@@ -436,6 +460,7 @@ class StorageGatewayClient {
         const error = new Error(
           `Failed to upload blob tree: ${response.status} ${response.statusText} - ${errorText}`,
         );
+        // Add response status for retry logic
         (error as any).response = { status: response.status };
         throw error;
       }
@@ -470,43 +495,23 @@ export class StorageClient {
     throw new Error("Expected v3 response body");
   }
 
-  /**
-   * Upload a file to storage.
-   * @param blobBytes - raw file bytes
-   * @param onProgress - optional progress callback (0-100)
-   * @param mimeType - MIME type of the file (e.g. "image/jpeg", "application/pdf")
-   * @param filename - original filename for Content-Disposition header
-   */
   public async putFile(
     blobBytes: Uint8Array,
     onProgress?: (percentage: number) => void,
-    mimeType?: string,
-    filename?: string,
   ): Promise<{ hash: string }> {
-    const contentType = mimeType || "application/octet-stream";
-
-    // HTTP headers for chunk upload requests
+    // HTTP headers for fetch requests (used for the PUT request to gateway)
     const httpHeaders: Headers = {
       "Content-Type": "application/json",
     };
-
-    // File metadata headers stored with the blob — these control how the browser
-    // serves the file when accessed via the storage gateway URL.
+    // Create a Blob from the bytes
+    const file = new Blob([new Uint8Array(blobBytes)], {
+      type: "application/octet-stream",
+    });
+    // File metadata headers that will be stored with the blob tree
     const fileHeaders: Headers = {
-      "Content-Type": contentType,
+      "Content-Type": "application/octet-stream",
+      "Content-Length": file.size.toString(),
     };
-
-    // Add Content-Disposition so the browser displays (not downloads) the file
-    // when the URL is opened directly, e.g. from an Excel hyperlink.
-    if (filename) {
-      // Use "inline" so the browser renders it (PDF viewer, image, etc.)
-      fileHeaders["Content-Disposition"] = `inline; filename="${filename}"`;
-    } else {
-      fileHeaders["Content-Disposition"] = "inline";
-    }
-
-    const file = new Blob([new Uint8Array(blobBytes)], { type: contentType });
-    fileHeaders["Content-Length"] = file.size.toString();
 
     const { chunks, chunkHashes, blobHashTree } =
       await this.processFileForUpload(file, fileHeaders);
@@ -581,6 +586,7 @@ export class StorageClient {
         projectId: this.projectId,
         httpHeaders,
       });
+      // Use atomic increment to avoid race conditions
       const currentCompleted = ++completedChunks;
       if (onProgress != null) {
         const percentage =

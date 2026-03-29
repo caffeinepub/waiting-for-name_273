@@ -55,42 +55,15 @@ export function detectMimeType(bytes: Uint8Array): string {
   return "application/octet-stream";
 }
 
-function mimeToExtension(mimeType: string): string {
-  const map: Record<string, string> = {
-    "application/pdf": "pdf",
-    "image/jpeg": "jpg",
-    "image/png": "png",
-    "image/gif": "gif",
-    "image/webp": "webp",
-    "image/bmp": "bmp",
-  };
-  return map[mimeType] || "bin";
-}
-
 export async function uploadFileAndGetBlobId(
   file: File | Blob,
   onProgress?: (pct: number) => void,
-  suggestedFilename?: string,
+  _suggestedFilename?: string,
 ): Promise<string> {
   const client = await getSharedStorageClient();
   const bytes = new Uint8Array(await file.arrayBuffer());
 
-  // Determine correct MIME type: prefer file's declared type, fall back to magic-byte detection
-  let mimeType = (file as File).type || "";
-  if (!mimeType || mimeType === "application/octet-stream") {
-    mimeType = detectMimeType(bytes);
-  }
-
-  // Build a filename for Content-Disposition: use provided name, original file name, or derive from MIME
-  const originalName = suggestedFilename || (file as File).name || "";
-  const ext = mimeToExtension(mimeType);
-  const filename = originalName
-    ? originalName.includes(".")
-      ? originalName
-      : `${originalName}.${ext}`
-    : `document.${ext}`;
-
-  const { hash } = await client.putFile(bytes, onProgress, mimeType, filename);
+  const { hash } = await client.putFile(bytes, onProgress);
   return MOTOKO_DEDUPLICATION_SENTINEL + hash;
 }
 

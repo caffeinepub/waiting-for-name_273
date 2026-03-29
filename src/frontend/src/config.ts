@@ -80,6 +80,35 @@ export async function loadConfig(): Promise<Config> {
   }
 }
 
+// Shared StorageClient singleton — used by storageHelper.ts for uploads and URL resolution
+let sharedStorageClientCache: StorageClient | null = null;
+let sharedAgentCache: HttpAgent | null = null;
+
+export async function getSharedStorageClient(): Promise<StorageClient> {
+  if (sharedStorageClientCache) {
+    return sharedStorageClientCache;
+  }
+  const config = await loadConfig();
+  const agent = new HttpAgent({
+    host: config.backend_host,
+  });
+  if (config.backend_host?.includes("localhost")) {
+    await agent.fetchRootKey().catch((err) => {
+      console.warn("Unable to fetch root key.");
+      console.error(err);
+    });
+  }
+  sharedAgentCache = agent;
+  sharedStorageClientCache = new StorageClient(
+    config.bucket_name,
+    config.storage_gateway_url,
+    config.backend_canister_id,
+    config.project_id,
+    agent,
+  );
+  return sharedStorageClientCache;
+}
+
 function extractAgentErrorMessage(error: string): string {
   const errorString = String(error);
   const match = errorString.match(/with message:\s*'([^']+)'/s);
@@ -100,58 +129,16 @@ async function maybeLoadMockBackend(): Promise<backendInterface | null> {
 
   try {
     const mockModules = import.meta.glob("./mocks/backend.{ts,tsx,js,jsx}");
-
     const path = Object.keys(mockModules)[0];
     if (!path) return null;
-
     const mod = (await mockModules[path]()) as {
       mockBackend?: backendInterface;
     };
-
     return mod.mockBackend ?? null;
   } catch {
     return null;
   }
 }
-
-// ─── Shared StorageClient ────────────────────────────────────────────────────
-// A single cached StorageClient instance reused across the app.
-// storageHelper.ts imports this to upload/download files.
-
-let sharedStorageClientCache: StorageClient | null = null;
-let sharedAgentCache: HttpAgent | null = null;
-
-export async function getSharedStorageClient(): Promise<StorageClient> {
-  if (sharedStorageClientCache) {
-    return sharedStorageClientCache;
-  }
-
-  const config = await loadConfig();
-
-  const agent = new HttpAgent({
-    host: config.backend_host,
-  });
-
-  if (config.backend_host?.includes("localhost")) {
-    await agent.fetchRootKey().catch((err) => {
-      console.warn("Unable to fetch root key for local replica");
-      console.error(err);
-    });
-  }
-
-  sharedAgentCache = agent;
-  sharedStorageClientCache = new StorageClient(
-    config.bucket_name,
-    config.storage_gateway_url,
-    config.backend_canister_id,
-    config.project_id,
-    agent,
-  );
-
-  return sharedStorageClientCache;
-}
-
-// ─── Actor Factory ───────────────────────────────────────────────────────────
 
 export async function createActorWithConfig(
   options?: CreateActorOptions,
@@ -213,3 +200,6 @@ export async function createActorWithConfig(
     actorOptions,
   );
 }
+
+// Suppress unused variable warning
+void sharedAgentCache;

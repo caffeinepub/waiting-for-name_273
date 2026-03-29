@@ -6,6 +6,8 @@ export function useGetAllPersons() {
   const { actor, isFetching } = useActor();
   return useQuery<Person[]>({
     queryKey: ["persons"],
+    staleTime: 0,
+    refetchOnMount: true,
     queryFn: async () => {
       if (!actor) return [];
       return actor.getAllPersons();

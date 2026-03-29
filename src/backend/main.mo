@@ -3,7 +3,6 @@ import Text "mo:core/Text";
 import Int "mo:core/Int";
 import Time "mo:core/Time";
 import Nat "mo:core/Nat";
-import Iter "mo:core/Iter";
 import MixinStorage "blob-storage/Mixin";
 
 actor {
@@ -22,11 +21,40 @@ actor {
     createdAt : Int;
   };
 
-  var nextPersonId = 0;
-  var nextDocumentId = 0;
+  // Stable storage: survives canister upgrades/redeployments
+  stable var stableNextPersonId : Nat = 0;
+  stable var stableNextDocumentId : Nat = 0;
+  stable var stablePersons : [(Nat, Person)] = [];
+  stable var stableDocuments : [(Nat, Document)] = [];
+
+  var nextPersonId = stableNextPersonId;
+  var nextDocumentId = stableNextDocumentId;
 
   let persons = Map.empty<Nat, Person>();
   let documents = Map.empty<Nat, Document>();
+
+  // Restore data from stable storage on startup
+  do {
+    for ((k, v) in stablePersons.vals()) {
+      persons.add(k, v);
+    };
+    for ((k, v) in stableDocuments.vals()) {
+      documents.add(k, v);
+    };
+  };
+
+  // Save data to stable storage before upgrade
+  system func preupgrade() {
+    stablePersons := persons.entries().toArray();
+    stableDocuments := documents.entries().toArray();
+    stableNextPersonId := nextPersonId;
+    stableNextDocumentId := nextDocumentId;
+  };
+
+  system func postupgrade() {
+    stablePersons := [];
+    stableDocuments := [];
+  };
 
   public shared ({ caller }) func addPerson(name : Text) : async Nat {
     let id = nextPersonId;
